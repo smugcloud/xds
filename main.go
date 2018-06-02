@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"io"
 	"log"
 	"net"
 	"time"
@@ -59,7 +58,7 @@ var h = &core.Address{Address: &core.Address_SocketAddress{
 		Address:  targetHost,
 		Protocol: core.TCP,
 		PortSpecifier: &core.SocketAddress_PortValue{
-			PortValue: uint32(443),
+			PortValue: uint32(9000),
 		},
 	},
 }}
@@ -128,6 +127,15 @@ var dr = &v2.DiscoveryResponse{
 	TypeUrl: "type.googleapis.com/envoy.api.v2.Listener",
 }
 
+var cdr = &v2.DiscoveryResponse{
+	VersionInfo: "number-2",
+	Resources: []types.Any{{
+		TypeUrl: "type.googleapis.com/envoy.api.v2.Cluster",
+		Value:   MarshalCluster(cluster),
+	}},
+	TypeUrl: "type.googleapis.com/envoy.api.v2.Cluster",
+}
+
 //Marshal creates a byte slice from a Message
 func Marshal(l *v2.Listener) []byte {
 
@@ -136,6 +144,7 @@ func Marshal(l *v2.Listener) []byte {
 
 }
 
+//MarshalCluster marshal's a cluster into a byte slice
 func MarshalCluster(l *v2.Cluster) []byte {
 
 	m, _ := prot.Marshal(l)
@@ -159,28 +168,27 @@ func main() {
 	grpc.Serve(lis)
 }
 
-var cdr = &v2.DiscoveryResponse{
-	VersionInfo: "number-2",
-	Resources: []types.Any{{
-		TypeUrl: "type.googleapis.com/envoy.api.v2.Cluster",
-		Value:   MarshalCluster(cluster),
-	}},
-	TypeUrl: "type.googleapis.com/envoy.api.v2.Cluster",
-}
+var last = 0
 
 func (c *clusterServer) StreamClusters(scs v2.ClusterDiscoveryService_StreamClustersServer) error {
 	log.Print("In Cluster Stream")
-	ds, err := scs.Recv()
-	log.Printf("Recieved: %v\n", ds)
-	log.Printf("Sending DiscoveryResponse: %v\n", dr)
-	scs.Send(cdr)
-	if err == io.EOF {
-		return nil
+	ch := make(chan int, 1)
+	//Fill the channel to send initial cluster
+	ch <- 1
+	for {
+		select {
+		case last = <-ch:
+			ds, err := scs.Recv()
+			log.Printf("Recieved: %v\n", ds)
+			log.Printf("Sending DiscoveryResponse: %v\n", dr)
+			scs.Send(cdr)
+
+			if err != nil {
+				return err
+			}
+		default:
+		}
 	}
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func (c *clusterServer) FetchClusters(context.Context, *v2.DiscoveryRequest) (*v2.DiscoveryResponse, error) {
@@ -190,183 +198,25 @@ func (c *clusterServer) FetchClusters(context.Context, *v2.DiscoveryRequest) (*v
 func (l *listenerServer) StreamListeners(sls v2.ListenerDiscoveryService_StreamListenersServer) error {
 
 	log.Print("In the stream")
-	// for {
-	ds, err := sls.Recv()
-	log.Printf("Recieved: %v\n", ds)
-	log.Printf("Sending DiscoveryResponse: %v\n", dr)
-	sls.Send(dr)
-	if err == io.EOF {
-		return nil
+	ch := make(chan int, 1)
+	//Fill the channel to send initial cluster
+	ch <- 1
+	for {
+		select {
+		case last = <-ch:
+			ds, err := sls.Recv()
+			log.Printf("Recieved: %v\n", ds)
+			log.Printf("Sending DiscoveryResponse: %v\n", dr)
+			sls.Send(dr)
+
+			if err != nil {
+				return err
+			}
+		default:
+		}
 	}
-	if err != nil {
-		return err
-	}
-	//}
-	return nil
 }
 
 func (l *listenerServer) FetchListeners(context.Context, *v2.DiscoveryRequest) (*v2.DiscoveryResponse, error) {
 	return nil, nil
 }
-
-// create a cache
-// signal := make(chan struct{})
-// cb := &callbacks{signal: signal}
-// config := cache.NewSnapshotCache(false, test.Hasher{}, logger{})
-// srv := server.NewServer(config, cb)
-// grpc := grpc.NewServer()
-// v2.RegisterListenerDiscoveryServiceServer(grpc, srv)
-// v2.RegisterClusterDiscoveryServiceServer(grpc, srv)
-// lis, err := net.Listen("tcp", "localhost:19000")
-// if err != nil {
-// 	log.Printf("Error acquiring listner: %v", err)
-// }
-// atomic.AddInt32(&version, 1)
-
-// var listenerName = "nick-xds"
-// var targetHost = "www.bbc.com"
-// var targetPrefix = "/robots.txt"
-// var virtualHostName = "local_service"
-// var remoteHost = "www.bbc.com"
-
-// var routeConfigName = "local_route"
-// nodeID := "test-id"
-// clusterName := "nick-xds"
-// h := &core.Address{Address: &core.Address_SocketAddress{
-// 	SocketAddress: &core.SocketAddress{
-// 		Address:  remoteHost,
-// 		Protocol: core.TCP,
-// 		PortSpecifier: &core.SocketAddress_PortValue{
-// 			PortValue: uint32(443),
-// 		},
-// 	},
-// }}
-// c := []cache.Resource{
-// 	&v2.Cluster{
-// 		Name:            clusterName,
-// 		ConnectTimeout:  2 * time.Second,
-// 		Type:            v2.Cluster_LOGICAL_DNS,
-// 		DnsLookupFamily: v2.Cluster_V4_ONLY,
-// 		LbPolicy:        v2.Cluster_ROUND_ROBIN,
-// 		Hosts:           []*core.Address{h},
-// 	},
-// }
-
-// v := route.VirtualHost{
-// 	Name:    virtualHostName,
-// 	Domains: []string{"*"},
-
-// 	Routes: []route.Route{{
-// 		Match: route.RouteMatch{
-// 			PathSpecifier: &route.RouteMatch_Prefix{
-// 				Prefix: targetPrefix,
-// 			},
-// 		},
-// 		Action: &route.Route_Route{
-// 			Route: &route.RouteAction{
-// 				HostRewriteSpecifier: &route.RouteAction_HostRewrite{
-// 					HostRewrite: targetHost,
-// 				},
-// 				ClusterSpecifier: &route.RouteAction_Cluster{
-// 					Cluster: clusterName,
-// 				},
-// 			},
-// 		},
-// 	}}}
-// manager := &v2.HttpConnectionManager{
-// 	CodecType:  v2.AUTO,
-// 	StatPrefix: "ingress_http",
-// 	RouteSpecifier: &v2.HttpConnectionManager_RouteConfig{
-// 		RouteConfig: &v2.RouteConfiguration{
-// 			Name:         routeConfigName,
-// 			VirtualHosts: []route.VirtualHost{v},
-// 		},
-// 	},
-// 	HttpFilters: []*v2.HttpFilter{{
-// 		Name: util.Router,
-// 	}},
-// }
-// pbst, err := util.MessageToStruct(manager)
-// if err != nil {
-// 	panic(err)
-// }
-
-// var l = []cache.Resource{
-// 	&v2.Listener{
-// 		Name: listenerName,
-// 		Address: core.Address{
-// 			Address: &core.Address_SocketAddress{
-// 				SocketAddress: &core.SocketAddress{
-// 					Protocol: core.TCP,
-// 					Address:  localhost,
-// 					PortSpecifier: &core.SocketAddress_PortValue{
-// 						PortValue: 80,
-// 					},
-// 				},
-// 			},
-// 		},
-// 		FilterChains: []listener.FilterChain{{
-// 			Filters: []listener.Filter{{
-// 				Name:   util.HTTPConnectionManager,
-// 				Config: pbst,
-// 			}},
-// 		}},
-// 	}}
-// log.Infof(">>>>>>>>>>>>>>>>>>> creating snapshot Version 0")
-// snap := cache.NewSnapshot(string(version), nil, c, nil, l)
-
-// config.SetSnapshot(nodeID, snap)
-// grpc.Serve(lis)
-// }
-
-// type logger struct{}
-
-// func (logger logger) Infof(format string, args ...interface{}) {
-// log.Debugf(format, args...)
-// }
-// func (logger logger) Errorf(format string, args ...interface{}) {
-// log.Errorf(format, args...)
-// }
-
-// // Hasher returns node ID as an ID
-// type Hasher struct {
-// }
-
-// type callbacks struct {
-// signal   chan struct{}
-// fetches  int
-// requests int
-// mu       sync.Mutex
-// }
-
-// func (cb *callbacks) Report() {
-// cb.mu.Lock()
-// defer cb.mu.Unlock()
-// log.WithFields(log.Fields{"fetches": cb.fetches, "requests": cb.requests}).Info("server callbacks")
-// }
-// func (cb *callbacks) OnStreamOpen(id int64, typ string) {
-// log.Debugf("stream %d open for %s", id, typ)
-// }
-// func (cb *callbacks) OnStreamClosed(id int64) {
-// log.Debugf("stream %d closed", id)
-// }
-// func (cb *callbacks) OnStreamRequest(int64, *v2.DiscoveryRequest) {
-// cb.mu.Lock()
-// defer cb.mu.Unlock()
-// cb.requests++
-// if cb.signal != nil {
-// 	close(cb.signal)
-// 	cb.signal = nil
-// }
-// }
-// func (cb *callbacks) OnStreamResponse(int64, *v2.DiscoveryRequest, *v2.DiscoveryResponse) {}
-// func (cb *callbacks) OnFetchRequest(req *v2.DiscoveryRequest) {
-// cb.mu.Lock()
-// defer cb.mu.Unlock()
-// cb.fetches++
-// if cb.signal != nil {
-// 	close(cb.signal)
-// 	cb.signal = nil
-// }
-// }
-// func (cb *callbacks) OnFetchResponse(*v2.DiscoveryRequest, *v2.DiscoveryResponse) {}
