@@ -71,7 +71,6 @@ func (u *UberRoutes) UpdateVirtualHost(vhn string) {
 		Domains: []string{"*"},
 		Routes:  u.Routes,
 	}
-	log.Printf("vh in UpdateVirtualHost: %s", vh)
 	u.VHost = nil
 	u.VHost = append(u.VHost, vh)
 
@@ -140,6 +139,7 @@ func (u *UberRoutes) BootstrapListener(clusterName string) *v2.Listener {
 	vh := u.NewVirtualHost("demo")
 	u.AppendVhost(vh)
 	lr := u.NewHCMAndListener()
+	log.Printf("Initial route created: http://localhost:8888/probe")
 	return lr
 }
 
