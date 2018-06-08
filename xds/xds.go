@@ -32,9 +32,6 @@ func NewRoute(path, cluster string) route.Route {
 		},
 		Action: &route.Route_Route{
 			Route: &route.RouteAction{
-				// HostRewriteSpecifier: &route.RouteAction_HostRewrite{
-				// 	HostRewrite: targetHost,
-				// },
 				ClusterSpecifier: &route.RouteAction_Cluster{
 					Cluster: cluster,
 				},
@@ -44,21 +41,14 @@ func NewRoute(path, cluster string) route.Route {
 	return route
 }
 
-// func (u *UberRoutes) Playground() {
-// 	log.Printf("UberRoutes in Playground: %v", u)
-// }
-
 //NewCluster creates a Cluster object
 func (u *UberRoutes) NewCluster(address, name string, port int) []*v2.Cluster {
-	// log.Printf("Length of CoreAddresses: %v", len(u.CoreAddresses))
 	var cluster = &v2.Cluster{
-
 		Name:            name,
 		ConnectTimeout:  2 * time.Second,
 		Type:            v2.Cluster_LOGICAL_DNS,
 		DnsLookupFamily: v2.Cluster_V4_ONLY,
 		LbPolicy:        v2.Cluster_ROUND_ROBIN,
-		// Hosts:           u.CoreAddresses,
 		Hosts: []*core.Address{{Address: &core.Address_SocketAddress{
 			SocketAddress: &core.SocketAddress{
 				Address:  address,
@@ -73,27 +63,6 @@ func (u *UberRoutes) NewCluster(address, name string, port int) []*v2.Cluster {
 
 	u.Clusters = append(u.Clusters, cluster)
 	return u.Clusters
-}
-
-//NewCoreAddress creates a core.Address
-func (u *UberRoutes) NewCoreAddress(host string, port int) *core.Address {
-	var coreAddress = &core.Address{Address: &core.Address_SocketAddress{
-		SocketAddress: &core.SocketAddress{
-			Address:  host,
-			Protocol: core.TCP,
-			PortSpecifier: &core.SocketAddress_PortValue{
-				PortValue: uint32(port),
-			},
-		},
-	}}
-
-	return coreAddress
-}
-
-func (u *UberRoutes) AppendCoreAddress(c *core.Address) []*core.Address {
-	u.CoreAddresses = append(u.CoreAddresses, c)
-	log.Printf("After appending to CoreAddress: %v", u.CoreAddresses)
-	return u.CoreAddresses
 }
 
 func (u *UberRoutes) UpdateVirtualHost(vhn string) {
@@ -168,7 +137,6 @@ func (u *UberRoutes) BootstrapListener(clusterName string) *v2.Listener {
 	// var uber UberRoutes
 	nr := NewRoute("/probe", clusterName)
 	u.AppendRoute(nr)
-	log.Printf("Original routes: %s", u.Routes)
 	vh := u.NewVirtualHost("demo")
 	u.AppendVhost(vh)
 	lr := u.NewHCMAndListener()
@@ -187,14 +155,12 @@ func MessageToStruct(m *hcm.HttpConnectionManager) *types.Struct {
 // toAny converts the contens of a resourcer's Values to the
 // respective slice of types.Any.
 func toAny(dr []*v2.Cluster) ([]types.Any, error) {
-	log.Printf("Length of slice: %v", len(dr))
 	typeUrl := "type.googleapis.com/envoy.api.v2.Cluster"
 	resources := make([]types.Any, len(dr))
 	for i := range dr {
 		value := MarshalCluster(dr[i])
 		resources[i] = types.Any{TypeUrl: typeUrl, Value: value}
 	}
-	log.Printf("Final resources before sent: %s", resources)
 	return resources, nil
 }
 
