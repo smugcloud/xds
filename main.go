@@ -141,7 +141,6 @@ func (c *clusterServer) StreamClusters(scs v2.ClusterDiscoveryService_StreamClus
 			if err != nil {
 				return err
 			}
-		default:
 		}
 	}
 }
@@ -170,7 +169,6 @@ func (l *listenerServer) StreamListeners(sls v2.ListenerDiscoveryService_StreamL
 			if err != nil {
 				return err
 			}
-		default:
 		}
 	}
 }
