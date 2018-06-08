@@ -1,0 +1,55 @@
+static_resources:
+  listeners:
+  - address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 8888
+    filter_chains:
+    - filters:
+      - name: envoy.http_connection_manager
+        config:
+          codec_type: auto
+          stat_prefix: ingress_http
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: backend
+              domains:
+              - "*"
+              routes:
+              - match:
+                  prefix: "/probe"
+                route:
+                  cluster: probe
+              - match:
+                  prefix: "/probe9001"
+                route:
+                  cluster: probe9001
+          http_filters:
+          - name: envoy.router
+            config: {}
+  clusters:
+  - name: probe
+    dns_lookup_family: V4_ONLY
+    connect_timeout: 0.25s
+    type: logical_dns
+    lb_policy: round_robin
+    hosts:
+    - socket_address:
+        address: 127.0.0.1
+        port_value: 9000
+  - name: probe9001
+    dns_lookup_family: V4_ONLY
+    connect_timeout: 0.25s
+    type: logical_dns
+    lb_policy: round_robin
+    hosts:
+    - socket_address:
+        address: 127.0.0.1
+        port_value: 9001
+admin:
+  access_log_path: "/dev/null"
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 8001

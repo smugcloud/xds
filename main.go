@@ -1,189 +1,180 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"io/ioutil"
+	"log"
 	"net"
-	"sync"
-	"sync/atomic"
-	"time"
+	"net/http"
 
 	"github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	"github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
-	"github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
 	"github.com/envoyproxy/go-control-plane/envoy/api/v2/route"
-	hcm "github.com/envoyproxy/go-control-plane/envoy/config/filter/network/http_connection_manager/v2"
-	"github.com/envoyproxy/go-control-plane/pkg/cache"
-	"github.com/envoyproxy/go-control-plane/pkg/server"
-	"github.com/envoyproxy/go-control-plane/pkg/test"
-	"github.com/envoyproxy/go-control-plane/pkg/util"
-
-	log "github.com/sirupsen/logrus"
-	grpc "google.golang.org/grpc"
+	"github.com/smugcloud/xds/xds"
+	"google.golang.org/grpc"
 )
 
+const (
+	proto   = "tcp"
+	iface   = "127.0.0.1"
+	mgrPort = "19000"
+	httPort = ":19001"
+)
+
+var listenerName = "nick-xds"
+var targetPrefix = "/probe"
+var virtualHostName = "local_service"
+var targetHost = "127.0.0.1"
+var clusterName = "nick-xds"
+var secondCluster = "port9001"
+
+var vhName = "demo"
+
+type listenerServer struct {
+}
+
+// var coreAddresses []*core.Address
+var ch chan int
+var routeSlice []route.Route
+var virtualHosts []route.VirtualHost
+
+//Path holds the new path we want to add to the cache
+type Path struct {
+	Path string `json:"path"`
+	Port string `json:"port"`
+}
+
+//Register is helper to fire the channel
+func Register(c chan int) {
+	c <- 1
+}
+
+//Add a path to the listener server
+func addPath(w http.ResponseWriter, req *http.Request) {
+	var newPath Path
+	body, err := ioutil.ReadAll(req.Body)
+	req.Body.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+	json.Unmarshal(body, &newPath)
+	log.Printf("Received: %v", newPath)
+
+	newUber.Clusters = newUber.NewCluster(targetHost, secondCluster, 9001)
+
+	//Build the new route.Route
+	nr := xds.NewRoute(newPath.Path, secondCluster)
+
+	//Append the new route to the slice
+	newUber.AppendRoute(nr)
+
+	//Updates the routes in VirtualHost
+	newUber.UpdateVirtualHost(vhName)
+
+	bl := newUber.NewHCMAndListener()
+
+	cdr = xds.CreateClusterDiscoveryResponse(newUber.Clusters)
+
+	Register(ch)
+	ldr = xds.CreateListenerDiscoveryResponse(bl)
+
+	go Register(lch)
+	log.Printf("Added path: http://127.0.0.1:8888/%v", newPath.Path)
+}
+
+//Run an HTTP server to demonstrate dynamically updating the MgmtServer configs
+func runHTTP() {
+	http.HandleFunc("/addPath", addPath)
+	log.Print("HTTP Server listening on http://127.0.0.1" + httPort)
+	log.Fatal(http.ListenAndServe(httPort, nil))
+}
+
+type clusterServer struct {
+}
+
 var (
-	localhost = "127.0.0.1"
-	version   int32
+	newUber  = xds.UberRoutes{}
+	cdr, ldr *v2.DiscoveryResponse
 )
 
 func main() {
-	// create a cache
-	signal := make(chan struct{})
-	cb := &callbacks{signal: signal}
-	config := cache.NewSnapshotCache(false, test.Hasher{}, logger{})
-	srv := server.NewServer(config, cb)
+
+	newUber.Clusters = newUber.NewCluster(targetHost, clusterName, 9000)
+
+	//Build the initial CDR
+	cdr = xds.CreateClusterDiscoveryResponse(newUber.Clusters)
+
+	bl := newUber.BootstrapListener(clusterName)
+	//Build the initial LDR
+	ldr = xds.CreateListenerDiscoveryResponse(bl)
+
+	lis, err := net.Listen(proto, iface+":"+mgrPort)
+	if err != nil {
+		log.Fatalf("Error getting listener: %v", err)
+	}
+
 	grpc := grpc.NewServer()
-	v2.RegisterListenerDiscoveryServiceServer(grpc, srv)
-	v2.RegisterClusterDiscoveryServiceServer(grpc, srv)
-	lis, err := net.Listen("tcp", "localhost:19000")
-	if err != nil {
-		log.Printf("Error acquiring listner: %v", err)
-	}
-	atomic.AddInt32(&version, 1)
+	v2.RegisterClusterDiscoveryServiceServer(grpc, &clusterServer{})
+	v2.RegisterListenerDiscoveryServiceServer(grpc, &listenerServer{})
 
-	var listenerName = "nick-xds"
-	var targetHost = "www.bbc.com"
-	var targetPrefix = "/robots.txt"
-	var virtualHostName = "local_service"
-	var remoteHost = "www.bbc.com"
-
-	var routeConfigName = "local_route"
-	nodeID := "test-id"
-	clusterName := "nick-xds"
-	h := &core.Address{Address: &core.Address_SocketAddress{
-		SocketAddress: &core.SocketAddress{
-			Address:  remoteHost,
-			Protocol: core.TCP,
-			PortSpecifier: &core.SocketAddress_PortValue{
-				PortValue: uint32(443),
-			},
-		},
-	}}
-	c := []cache.Resource{
-		&v2.Cluster{
-			Name:            clusterName,
-			ConnectTimeout:  2 * time.Second,
-			Type:            v2.Cluster_LOGICAL_DNS,
-			DnsLookupFamily: v2.Cluster_V4_ONLY,
-			LbPolicy:        v2.Cluster_ROUND_ROBIN,
-			Hosts:           []*core.Address{h},
-		},
-	}
-
-	v := route.VirtualHost{
-		Name:    virtualHostName,
-		Domains: []string{"*"},
-
-		Routes: []route.Route{{
-			Match: route.RouteMatch{
-				PathSpecifier: &route.RouteMatch_Prefix{
-					Prefix: targetPrefix,
-				},
-			},
-			Action: &route.Route_Route{
-				Route: &route.RouteAction{
-					HostRewriteSpecifier: &route.RouteAction_HostRewrite{
-						HostRewrite: targetHost,
-					},
-					ClusterSpecifier: &route.RouteAction_Cluster{
-						Cluster: clusterName,
-					},
-				},
-			},
-		}}}
-	manager := &hcm.HttpConnectionManager{
-		CodecType:  hcm.AUTO,
-		StatPrefix: "ingress_http",
-		RouteSpecifier: &hcm.HttpConnectionManager_RouteConfig{
-			RouteConfig: &v2.RouteConfiguration{
-				Name:         routeConfigName,
-				VirtualHosts: []route.VirtualHost{v},
-			},
-		},
-		HttpFilters: []*hcm.HttpFilter{{
-			Name: util.Router,
-		}},
-	}
-	pbst, err := util.MessageToStruct(manager)
-	if err != nil {
-		panic(err)
-	}
-
-	var l = []cache.Resource{
-		&v2.Listener{
-			Name: listenerName,
-			Address: core.Address{
-				Address: &core.Address_SocketAddress{
-					SocketAddress: &core.SocketAddress{
-						Protocol: core.TCP,
-						Address:  localhost,
-						PortSpecifier: &core.SocketAddress_PortValue{
-							PortValue: 80,
-						},
-					},
-				},
-			},
-			FilterChains: []listener.FilterChain{{
-				Filters: []listener.Filter{{
-					Name:   util.HTTPConnectionManager,
-					Config: pbst,
-				}},
-			}},
-		}}
-	log.Infof(">>>>>>>>>>>>>>>>>>> creating snapshot Version 0")
-	snap := cache.NewSnapshot(string(version), nil, c, nil, l)
-
-	config.SetSnapshot(nodeID, snap)
+	go runHTTP()
+	log.Printf("gRPC Listening on: %v", "http://"+iface+":"+mgrPort)
 	grpc.Serve(lis)
 }
 
-type logger struct{}
+var last = 0
 
-func (logger logger) Infof(format string, args ...interface{}) {
-	log.Debugf(format, args...)
-}
-func (logger logger) Errorf(format string, args ...interface{}) {
-	log.Errorf(format, args...)
-}
+func (c *clusterServer) StreamClusters(scs v2.ClusterDiscoveryService_StreamClustersServer) error {
+	ch = make(chan int, 1)
+	//Fill the channel to send initial cluster
+	ch <- 1
+	for {
+		select {
+		case last = <-ch:
+			// log.Print("Channel fired.\n")
+			_, err := scs.Recv()
+			// log.Printf("Recieved: %v\n", ds)
+			// log.Printf("Sending DiscoveryResponse: %v\n", cdr)
+			log.Print("Sending CDS Response.")
+			scs.Send(cdr)
 
-// Hasher returns node ID as an ID
-type Hasher struct {
-}
-
-type callbacks struct {
-	signal   chan struct{}
-	fetches  int
-	requests int
-	mu       sync.Mutex
-}
-
-func (cb *callbacks) Report() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	log.WithFields(log.Fields{"fetches": cb.fetches, "requests": cb.requests}).Info("server callbacks")
-}
-func (cb *callbacks) OnStreamOpen(id int64, typ string) {
-	log.Debugf("stream %d open for %s", id, typ)
-}
-func (cb *callbacks) OnStreamClosed(id int64) {
-	log.Debugf("stream %d closed", id)
-}
-func (cb *callbacks) OnStreamRequest(int64, *v2.DiscoveryRequest) {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	cb.requests++
-	if cb.signal != nil {
-		close(cb.signal)
-		cb.signal = nil
+			if err != nil {
+				return err
+			}
+		default:
+		}
 	}
 }
-func (cb *callbacks) OnStreamResponse(int64, *v2.DiscoveryRequest, *v2.DiscoveryResponse) {}
-func (cb *callbacks) OnFetchRequest(req *v2.DiscoveryRequest) {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	cb.fetches++
-	if cb.signal != nil {
-		close(cb.signal)
-		cb.signal = nil
+
+func (c *clusterServer) FetchClusters(context.Context, *v2.DiscoveryRequest) (*v2.DiscoveryResponse, error) {
+	return nil, nil
+}
+
+var lch chan int
+
+func (l *listenerServer) StreamListeners(sls v2.ListenerDiscoveryService_StreamListenersServer) error {
+
+	// log.Print("In the stream")
+	lch = make(chan int, 1)
+	//Fill the channel to send initial cluster
+	lch <- 1
+	for {
+		select {
+		case last = <-lch:
+			_, err := sls.Recv()
+			// log.Printf("Recieved: %v\n", ds)
+			// log.Printf("Sending DiscoveryResponse: %v\n", ldr)
+			log.Print("Sending LDS Response.")
+			sls.Send(ldr)
+
+			if err != nil {
+				return err
+			}
+		default:
+		}
 	}
 }
-func (cb *callbacks) OnFetchResponse(*v2.DiscoveryRequest, *v2.DiscoveryResponse) {}
+
+func (l *listenerServer) FetchListeners(context.Context, *v2.DiscoveryRequest) (*v2.DiscoveryResponse, error) {
+	return nil, nil
+}
