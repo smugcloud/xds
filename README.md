@@ -1,6 +1,6 @@
 # Envoy Discovery Service
 
-This is a proof of concept implementation of a management server for Enovy to communicate dynamicallywith.
+This is a proof of concept implementation of a management server for Enovy to communicate dynamically with.
 
 ## Overview
 
