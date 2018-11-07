@@ -1,4 +1,4 @@
-package consul
+package xds
 
 import (
 	"reflect"
@@ -13,19 +13,19 @@ var (
 )
 
 func TestPopulateCache(t *testing.T) {
-	cache := NewCache()
+	cache := NewConsulCache()
 
-	expected := Cache{
+	expected := ConsulCache{
 		Services: map[string]*Service{
 			"consul": &Service{Name: "consul"},
 			"probe":  &Service{Name: "probe"},
 		},
 	}
-	result := cache.populateCache(services)
-	eq := reflect.DeepEqual(expected.Services, result.Services)
+	cache.populateCache(services)
+	eq := reflect.DeepEqual(expected.Services, cache.Services)
 
 	if eq == false {
-		t.Errorf("populateCache producing the wrong result with Cache's: %+v and %+v", expected.Services, result.Services)
+		t.Errorf("populateCache producing the wrong result with Cache's: %+v and %+v", expected.Services, cache.Services)
 	}
 
 }
